@@ -1,0 +1,68 @@
+# ── docker-compose.yml ────────────────────────────────────────────────────────
+# Spins up:
+#   • ollama   — local LLM server (GPU-enabled if available)
+#   • rag-app  — the Enterprise RAG desktop app
+#
+# Quick start:
+#   1. Pull models first:
+#        docker compose run --rm ollama ollama pull mistral
+#        docker compose run --rm ollama ollama pull nomic-embed-text
+#   2. On Windows: install VcXsrv and launch it with "Disable access control" checked
+#   3. Start everything:
+#        docker compose up
+#
+# On Linux add display forwarding before step 3:
+#   export DISPLAY=:0 && xhost +local:docker
+
+version: "3.9"
+
+services:
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: enterprise-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # Uncomment for NVIDIA GPU support:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 20s
+      timeout: 10s
+      retries: 8
+      start_period: 60s # allow Ollama to fully boot before checks begin
+
+  rag-app:
+    build: .
+    container_name: enterprise-rag
+    user: root                             # ensures write access to mounted volumes
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - EMBED_MODEL=nomic-embed-text
+      - CHAT_MODEL=mistral:latest
+      - DISPLAY=host.docker.internal:0     # points to VcXsrv running on Windows host
+    volumes:
+      - ./documents:/app/documents          # PDF source folder (hot-reload)
+      - ./vector_db:/app/vector_db          # Chroma persisted index
+      - ./chat_history.json:/app/chat_history.json
+      # /tmp/.X11-unix removed — not applicable on Windows (using TCP X11 instead)
+    # network_mode: "bridge" removed — it breaks hostname resolution between
+    # containers. Both services now share the default compose network so
+    # rag-app can reach ollama via http://ollama:11434
+
+volumes:
+  ollama_data:
+
